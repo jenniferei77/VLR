@@ -7,6 +7,8 @@ from datetime import datetime
 import csv
 from matplotlib import pyplot
 from sklearn.neighbors import KDTree
+from sklearn.manifold import TSNE
+from scipy.spatial import cKDTree
 
 import numpy as np
 import tensorflow as tf
@@ -73,8 +75,8 @@ class CaffeNet(keras.Model):
         out = self.dense1(flat_x)
         out = self.dropout1(out, training=training)
         out = self.dense2(out)
-        out = self.dropout2(out, training=training)
-        out = self.dense3(out)
+        #out = self.dropout2(out, training=training)
+        #out = self.dense3(out)
         return out
 
     def compute_output_shape(self, input_shape):
@@ -98,59 +100,81 @@ def _parse_test_function(image, label, weight):
     image = image - [[123.68, 115.78, 103.94]]
     return image, label, weight
     
-def task5(restore_dir, data_dir, model, test_images)
+def task5(restore_dir, data_dir, model, test_dataset):
     ## Task 5 Analysis:
-    print(args.train_stage1)
-    checkpoint.restore(tf.train.latest_checkpoint(restore_dir))
-    filter1 = np.asarray(model.conv1.trainable_weights[0][:,:,1,1])
-    w_min = np.min(filter1)
-    w_max = np.max(filter1)
-    pyplot.imshow(filter1, vmin=w_min, vmax=w_max, interpolation='nearest', cmap='seismic')
-    pdb.set_trace()
-    #pyplot.savefig((checkpoint_path + '/filter1.png'), bbox_inches='tight')
-    #pdb.set_trace()    
-
     images_to_eval = {'boat':'000069', 'bottle':'000202', 'bus':'000252', 'car':'000172', 'cat':'000292', 'chair':'000008', 'cow':'000025', 'dog':'000029', 'horse':'000010', 'person':'000010'}
+    print('Done evaluating the 10 images')
     class_to_mat = util.load_test_images(images_to_eval, data_dir) 
-    #conv1_outputs = np.empty[]
-    #pool3_outputs = np.empty[]
-    #iter_image = 0
-    #for image in test_images:
-    #    iter_image += 1
-    #    image_tensor = tf.convert_to_tensor(image)
-    #    output_conv1 = model.conv1.output(image, training=False)
-    #    output_pool3 = model.pool3.output(image, training=False)
-    #    if iter_image == 1:
-    #        conv1_outputs = output_conv1
-    #        pool3_outputs = output_pool3
-    #    else:
-    #        conv1_outputs = np.
+    conv1_outputs = np.zeros([1,20])
+    pool3_outputs = np.zeros([1,20])
+    iterator = 0
+    batch = 20
+    images = np.zeros([])
+    for batch, (image, labels, weights) in enumerate(test_dataset):
+        iterator += 1
+        print(image.shape)
+        #image = np.expand_dims(image, axis=0).astype('float32')
+        conv1_output = np.asarray(model.conv1(image))
+        pool3_output = np.asarray(model.pool3(image))
+        if iterator == 1:
+            images = np.asarray(image)
+            conv1_outputs = conv1_output
+            pool3_outputs = pool3_output
+        else:
+            images = np.concatenate((images, np.asarray(image)), axis=0)
+            conv1_outputs = np.concatenate((conv1_outputs, conv1_output), axis=0)
+            pool3_outputs = np.concatenate((pool3_outputs, pool3_output), axis=0)
+    print('Done getting outputs')
+    pdb.set_trace()
+    conv1_outputs = (conv1_outputs.reshape(conv1_outputs.shape[0], conv1_outputs.shape[1]*conv1_outputs.shape[2]*conv1_outputs.shape[3]))
+    pool3_outputs = pool3_outputs.reshape(4952, 36963)
+    pdb.set_trace()
+
+    #conv1_tree = cKDTree(conv1_outputs)
+    #pool3_tree = cKDTree(pool3_outputs)
+    print('Done making trees')
+    conv1_closest = {}
+    pool3_closest = {}
     
-    conv1_outputs = np.asarray(model.conv1.output(tf.convert_to_tensor(test_images), training=False))
-    pool3_outputs = np.asarray(model.pool3.output(tf.convert_to_tensor(test_images), training=False))
-    for key, value in class_to_mat:
-        conv1_tree = KDTree(
-    pool3_features = model.pool3.output
-#    model1 = caffenet(20)
-#    model1(tf.convert_to_tensor(np.zeros((1,224,224,3), dtype=np.float32)))
-#    model1.restore(args.train_stage1)
-#    filter1 = np.asarray(model1.conv1.trainable_weights[0][:,:,1,1])
-#    pyplot.imshow(filter1) 
-#    pdb.set_trace()
-#    
-#    model2 = caffenet(20)
-#    model2(tf.convert_to_tensor(np.zeros((1,224,224,3), dtype=np.float32)))
-#    model2.restore(args.train_stage2)
-#    filter2 = np.asarray(model1.conv1.trainable_weights[0][:,:,1,1])
-#    pyplot.imshow(filter2)
-#    pdb.set_trace()
-#
-#    model3 = caffenet(20)
-#    model3(tf.convert_to_tensor(np.zeros((1,224,224,3), dtype=np.float32)))
-#    model3.restore(args.train_stage3)
-#    filter3 = np.asarray(model1.conv1.trainable_weights[0][:,:,1,1])
-#    pyplot.imshow(filter3)
-#    pdb.set_trace()
+    for key in class_to_mat:
+        conv1_out = np.asarray(model.conv1(tf.convert_to_tensor(class_to_mat[key])))
+        pool3_out = np.asarray(model.pool3(tf.convert_to_tensor(class_to_mat[key])))
+        conv1_norms = np.linalg.norm(conv1_out - conv1_outputs)
+        pool3_norms = np.linalg.norm(pool3_out - pool3_outputs)
+        conv1_ind = np.argpartition(conv1_norms, 5)[:5]
+        pool3_ind = np.argpartition(pool3_norms, 5)[:5]
+        #conv1_dist, conv1_ind = conv1_tree(conv1_out, k=5)
+        #pool3_dist, pool3_ind = pool3_tree(pool3_out, k=5)
+        pdb.set_trace()
+        conv1_closest[class_to_mat[key]] = images[conv1_ind]
+        fig1, (ax1, ax2, ax3, ax4, ax5, ax6) = pyplot.subplots(1,6)
+        ax1.imshow(class_to_mat[key])
+        ax2.imshow(images[conv1_ind[0]])
+        ax3.imshow(images[conv1_ind[1]])
+        ax4.imshow(images[conv1_ind[2]])
+        ax5.imshow(images[conv1_ind[3]])
+        ax6.imshow(images[conv1_ind[4]])
+        pyplot.show()
+        pyplot.savefig('/data/VLR/hw1/images_dir/' + key + '_conv1_KNNs.png')
+        
+        pool3_closest[class_to_mat[key]] = images[pool3_ind]
+        fig2, (ax7, ax8, ax9, ax10, ax11, ax12) = pyplot.subplots(1,6)
+        ax7.imshow(class_to_mat[key])
+        ax8.imshow(images[pool3_ind[0]])
+        ax9.imshow(images[pool3_ind[1]])
+        ax10.imshow(images[pool3_ind[2]])
+        ax11.imshow(images[pool3_ind[3]])
+        ax12.imshow(images[pool3_ind[4]])
+        pyplot.show()
+        pyplot.savefig('/data/VLR/hw1/images_dir/' + key + '_pool3_KNNs.png')
+
+        pdb.set_trace()
+    
+    return conv1_closest, pool3_closest
+
+#def task5_3(test_dataset, model):
+    
+    
 
 def main():
     parser = argparse.ArgumentParser(description='TensorFlow Pascal Example')
@@ -174,9 +198,7 @@ def main():
                         help='Path to PASCAL train data storage')
     parser.add_argument('--data_dir_test', type=str, default='./VOCtest/VOC2007',
                         help='Path to PASCAL test data storage')
-    parser.add_argument('--train_stage1', type=str, default='/data/hw1/03_output/2019-02-26_16-29-30/', help='Path to checkpoint 1')
-   # parser.add_argument('--train_stage2', type=str, default='/data/hw1/03_output/2019-02-26_16-29-30/checkpoint', help='Path to checkpoint 2')
-   # parser.add_argument('--train_stage3', type=str, default='/data/hw1/03_output/2019-02-26_16-29-30/checkpoint', help='Path to checkpoint 3')
+    parser.add_argument('--train_stage1', type=str, default='/data/hw1/03_output/2019-03-01_17-05-30/training_checkpoints/', help='Path to checkpoint 1')
 
     args = parser.parse_args()
     util.set_random_seed(args.seed)
@@ -198,6 +220,13 @@ def main():
     test_dataset = test_dataset.map(_parse_test_function)
     test_dataset = test_dataset.shuffle(10000).batch(args.batch_size)
 
+    randomize = np.arange(1000)
+    shuffled_images = test_images[randomize]
+    shuffled_labels = test_labels[randomize]
+    shuffled_weights = test_labels[randomize]
+    post_dataset = tf.data.Dataset.from_tensor_slices((shuffled_images, shuffled_labels, shuffled_weights))
+    pdb.set_trace()
+    
     model = CaffeNet(num_classes=len(CLASS_NAMES))
 
     logdir = os.path.join(args.log_dir,
@@ -217,7 +246,7 @@ def main():
     
     checkpoint_path = logdir + '/training_checkpoints'
     checkpoint_prefix = os.path.join(checkpoint_path, "ckpt")
-    checkpoint_inc = int(args.epochs*(train_labels.shape[0]/args.batch_size)/30)
+    checkpoint_inc = int(args.epochs*(train_labels.shape[0]/args.batch_size)/3)
     checkpoint = tf.train.Checkpoint(optimizer=optimizer, model=model, step_counter=global_step)    
 
     checkpoint_counter = 0
@@ -229,12 +258,47 @@ def main():
     init_AP, init_mAP = util.eval_dataset_map(model, test_dataset)
     with writer.as_default(), tf.contrib.summary.always_record_summaries():
         tf.contrib.summary.scalar('test_mAP', init_mAP)
-  
-    task5(args.train_stage1, args.data_dir_test, model) 
-     
+    
+    checkpoint.restore(args.train_stage1 + 'ckpt2-3.index')    
+ 
+# Task 5.3   
+    #post_outputs = np.empty([])
+    #post_iter = 0
+    #pdb.set_trace() 
+    #batch = 5
+    #for batch, (image, labels, weights) in enumerate(post_dataset):
+    #    post_iter += 1
+    #    image = tf.expand_dims(image, axis=0)
+    #    labels = tf.expand_dims(image, axis=0)
+    #    weights = tf.expand_dims(weights, axis=0)
+    #    post_output = np.asarray(model.dense2(image))
+    #    if pose_iter == 1:
+    #        post_outputs = post_output
+    #    else:
+    #        post_outputs = np.concatenate((post_outputs, post_output), axis=0)
+
+    #post_embedded = TSNE(n_components=1000).fit_transform(post_outputs)
+    #color_map = np.linspace(0.0, 1.0, num=20)
+    #post_labels = np.multiply(shuffled_labels, color_map)
+    #colors = np.sum(post_labels, axis=1)
+    #fig_tsne, ax_tsne = pyplot.scatter(post_embedded[:, 0], post_embedded[:, 1], c=colors, cmap=pyplot.cm.Spectral)
+ 
+    #pyplot.savefig('/data/VLR/hw1/images_dir/' + 'tsne.png')
+    
+ ## Task 5.1
+    #filter1 = np.asarray(model.conv1.trainable_weights[0][:,:,1,1])
+    #w_min = np.min(filter1)
+    #w_max = np.max(filter1)
+    
+    #pyplot.imshow(filter1, vmin=w_min, vmax=w_max, interpolation='nearest', cmap='seismic')
+    #pyplot.show()
+    #pyplot.savefig(args.train_stage1 + '/filter3.png')
+ 
+    #conv1_closest, pool3_closest = task5(args.train_stage1, args.data_dir_test, model, test_dataset) 
+    
     for epoch in range(args.epochs):
         total_loss = 0
-        #total_map = 0
+        #total_mAP = 0
         for batch, (image, label, weight) in enumerate(train_dataset):
             current_loss, gradients = util.cal_grad(model, loss_func=tf.losses.sigmoid_cross_entropy, inputs=image, targets=label)
             with writer.as_default(), tf.contrib.summary.always_record_summaries():
@@ -245,49 +309,40 @@ def main():
             total_loss += current_loss
             loss_avg = total_loss/global_step.numpy()
             if global_step.numpy() % args.log_interval == 0:
-                output_labels = tf.nn.sigmoid(model(image, training=false))
+                output_labels = tf.nn.sigmoid(model(image, training=False))
                 acc_count += 1
-                print('epoch: ', args.epochs, '/', 'global_step.numpy()') 
-                #train_map = np.nanmean(np.asarray(util.compute_ap(label.numpy(), output_labels.numpy(), weight.numpy(), average=none)))
-                #print('epoch: {0:d}/{1:d} step:{2:d} training loss:{3:.4f} training accuracy:{4:.4f}'.format(epoch,
-                #                                         args.epochs,
-                #                                         global_step.numpy(),
-                #                                         current_loss,
-                #                                         train_map))
-                #total_map += train_map
-                #epoch_map = total_map/acc_count
+                train_mAP = np.nanmean(np.asarray(util.compute_ap(label.numpy(), output_labels.numpy(), weight.numpy(), average=none)))
+                print('epoch: {0:d}/{1:d} step:{2:d} training loss:{3:.4f} training accuracy:{4:.4f}'.format(epoch,
+                                                         args.epochs,
+                                                         global_step.numpy(),
+                                                         current_loss,
+                                                         train_mAP))
                 with writer.as_default(), tf.contrib.summary.always_record_summaries():
                     tf.contrib.summary.scalar('training_loss', current_loss)
-                    #tf.contrib.summary.scalar('training_map', train_map)
+                    tf.contrib.summary.scalar('training_mAP', train_mAP)
                 train_log['iter'].append(global_step.numpy())
                 train_log['loss'].append(current_loss)
-                #train_log['map'].append(train_map)
+                train_log['mAP'].append(train_mAP)
             if global_step.numpy() % args.eval_interval == 0:
                 total_test_loss = 0
                 test_inc = 0
                 for test_batch, (test_image, test_label, test_weight) in enumerate(test_dataset):
-                    test_loss = tf.losses.sigmoid_cross_entropy(test_label, model(test_image, training=false), test_weight)
+                    test_loss = tf.losses.sigmoid_cross_entropy(test_label, model(test_image, training=False), test_weight)
                     test_inc += 1
                     total_test_loss += test_loss
                 final_test_loss = total_test_loss/test_inc
-                test_ap, test_map = util.eval_dataset_map(model, test_dataset)
+                test_AP, test_mAP = util.eval_dataset_map(model, test_dataset)
                 
-                print('global step:{0:d}, test loss:{1:.4f}, test map:{2:.4f}'.format(global_step.numpy(), final_test_loss, test_map))
+                print('global step:{0:d}, test loss:{1:.4f}, test mAP:{2:.4f}'.format(global_step.numpy(), final_test_loss, test_mAP))
                 test_log['iter'].append(global_step.numpy())
                 test_log['loss'].append(final_test_loss)
-                test_log['map'].append(test_map)
+                test_log['mAP'].append(test_mAP)
                 with writer.as_default(), tf.contrib.summary.always_record_summaries():
                     tf.contrib.summary.scalar('final_test_loss', final_test_loss)
-                    tf.contrib.summary.scalar('test_map', test_map)
+                    tf.contrib.summary.scalar('test_mAP', test_mAP)
             if global_step.numpy() % checkpoint_inc == 0:
                 checkpoint.save(file_prefix=checkpoint_prefix + str(checkpoint_counter))
                 checkpoint_counter += 1    
-    with open(logdir + '.csv', mode='w') as csv_file:
-        csv_file = csv.writer(csv_file, quoting=csv.quote_minimal)
-        for key, value in train_log.items():
-          csv_file.writerow([key, value])
-        for key, value in test_log.items():
-          csv_file.writerow([key, value])
     
     for cid, cname in enumerate(class_names):
         print('{}: {}'.format(cname, util.get_el(test_ap, cid)))
