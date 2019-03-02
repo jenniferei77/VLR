@@ -230,7 +230,7 @@ def main():
     
     checkpoint_path = logdir + '/training_checkpoints'
     checkpoint_prefix = os.path.join(checkpoint_path, "ckpt")
-    checkpoint_inc = int(args.epochs*(train_labels.shape[0]/args.batch_size)/30)
+    #checkpoint_inc = int(args.epochs*(train_labels.shape[0]/args.batch_size)/5)
     checkpoint = tf.train.Checkpoint(optimizer=optimizer, model=model)    
 
     checkpoint_counter = 0
@@ -284,9 +284,9 @@ def main():
                 with writer.as_default(), tf.contrib.summary.always_record_summaries():
                     #tf.contrib.summary.scalar('final_test_loss', final_test_loss)
                     tf.contrib.summary.scalar('test_mAP', test_mAP)
-            if global_step.numpy() % checkpoint_inc == 0:
-                checkpoint.save(file_prefix=checkpoint_prefix)
-                checkpoint_counter += 1
+            #if global_step.numpy() % checkpoint_inc == 0:
+            #    checkpoint.save(file_prefix=checkpoint_prefix)
+            #    checkpoint_counter += 1
     
     checkpoint.save(file_prefix=checkpoint_prefix)
     with open(logdir + '.csv', mode='w') as csv_file:
