@@ -224,7 +224,7 @@ class IMDBDataset(data.Dataset):
         """
         # TODO: Write this function, look at the imagenet code for inspiration
         img_path, target_list = self.imgs[index]
-        img = default_loader(img_path)
+        img = self.loader(img_path)
         target = np.asarray(target_list)
         if self.transform is not None:
             img = self.transform(img)

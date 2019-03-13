@@ -20,7 +20,6 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
         
-
 from datasets.factory import get_imdb
 from custom import *
 
@@ -202,7 +201,6 @@ def main():
     # TODO: Create loggers for visdom and tboard
     # TODO: You can pass the logger objects to train(), make appropriate
     # modifications to train()
-    print(args.vis)
     if args.vis:
         import visdom
         from tensorboardX import SummaryWriter
@@ -221,7 +219,7 @@ def main():
 
         # evaluate on validation set
         if epoch % args.eval_freq == 0 or epoch == args.epochs - 1:
-            m1, m2 = validate(val_loader, model, criterion)
+            m1, m2 = validate(val_loader, model, criterion, vis, writer, epoch)
             score = m1 * m2
             # remember best prec@1 and save checkpoint
             is_best = score > best_prec1
@@ -261,18 +259,16 @@ def train(train_loader, model, criterion, optimizer, epoch, vis, writer):
         # TODO: Perform any necessary functions on the output
         # TODO: Compute loss using ``criterion``
         output = model(input_var)
-
+        print('Train Model Output Shape: ', output.shape)
         pdb.set_trace()
 
         maxpool = nn.MaxPool2d(kernel_size=3, stride=2)
-        imoutput = maxpool(output)
-        
+        imoutput = maxpool(output)  
+        print('Train Maxpool Output Shape: ', imoutput.shape)
+        print('Target Shape: ', target_var.long())
         pdb.set_trace()
 
-        loss = criterion(output, target_var.long())
-
-
-
+        loss = criterion(imoutput, target_var.long())
 
         # measure metrics and record loss
         m1 = metric1(imoutput.data, target)
@@ -286,9 +282,6 @@ def train(train_loader, model, criterion, optimizer, epoch, vis, writer):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-
-
-
 
         # measure elapsed time
         batch_time.update(time.time() - end)
@@ -312,25 +305,13 @@ def train(train_loader, model, criterion, optimizer, epoch, vis, writer):
 
         #TODO: Visualize things as mentioned in handout
         #TODO: Visualize at appropriate intervals
-            if image_iter < 4:
-                image_name1 = 'train/image_batch' + image_iter + '_image1'
-                image_name2 = 'train/image_batch' + image_iter + '_image2'
-                #writer.add_image(image_name1, 
-            image_iter += 1    
-
-
-
-
-
-
-
-
+        writer.add_scalar('train/loss', loss.value)
 
 
         # End of train()
 
 
-def validate(val_loader, model, criterion):
+def validate(val_loader, model, criterion, vis, writer, epoch):
     batch_time = AverageMeter()
     losses = AverageMeter()
     avg_m1 = AverageMeter()
@@ -339,6 +320,7 @@ def validate(val_loader, model, criterion):
     # switch to evaluate mode
     model.eval()
 
+    image_freq = int(len(val_loader) / 4)
     end = time.time()
     for i, (input, target) in enumerate(val_loader):
         target = target.type(torch.FloatTensor).cuda(async=True)
@@ -349,7 +331,9 @@ def validate(val_loader, model, criterion):
         # TODO: Perform any necessary functions on the output
         # TODO: Compute loss using ``criterion``
         output = model(input_var)
-        loss = criterion(output, target_var.long())
+        maxpool = nn.MaxPool2d(kernel_size=3, stride=2)
+        imoutput = maxpool(output)
+        loss = criterion(imoutput, target_var.long())
         
         # measure metrics and record loss
         m1 = metric1(imoutput.data, target)
@@ -378,7 +362,21 @@ def validate(val_loader, model, criterion):
         #TODO: Visualize things as mentioned in handout
         #TODO: Visualize at appropriate intervals
             writer.add_scalar('train/loss', loss.data[0], i)
-        
+            if i % image_freq:
+                image1, target1 = input_var[1]
+                image2, target2 = input_var[2]
+                images = np.stack((image1, image2), axis=0)
+                print('images shape: ', images.shape)
+                images = torch.tensor(images)
+                writer.add_images('train/images_epoch' + str(epoch), images)
+
+                #images = torchvision.utils.make_grid(images)
+                #print('image shape after grid: ', images.shape)
+                image_title = str(epoch) + '_' + str(i) + '_image'
+                vis.images(images, opts=dict(title=image_title))
+
+            image_iter += 1    
+
                         
 
 
