@@ -207,8 +207,7 @@ def main():
         import visdom
         from tensorboardX import SummaryWriter
         vis = visdom.Visdom(server='http://localhost',port='8097')
-        #writer = SummaryWriter()
-        writer = None
+        writer = SummaryWriter()
     else:
         vis = None
         writer = None
@@ -270,7 +269,7 @@ def train(train_loader, model, criterion, optimizer, epoch, vis, writer):
         
         pdb.set_trace()
 
-        loss = criterion(output, target_var)
+        loss = criterion(output, target_var.long())
 
 
 
@@ -350,7 +349,7 @@ def validate(val_loader, model, criterion):
         # TODO: Perform any necessary functions on the output
         # TODO: Compute loss using ``criterion``
         output = model(input_var)
-        loss = criterion(output, target_var)
+        loss = criterion(output, target_var.long())
         
         # measure metrics and record loss
         m1 = metric1(imoutput.data, target)
@@ -378,7 +377,7 @@ def validate(val_loader, model, criterion):
 
         #TODO: Visualize things as mentioned in handout
         #TODO: Visualize at appropriate intervals
-            #writer.add_scalar('train/loss', loss.data[0], i)
+            writer.add_scalar('train/loss', loss.data[0], i)
         
                         
 
