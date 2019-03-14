@@ -156,7 +156,14 @@ def localizer_alexnet(pretrained=False, **kwargs):
     #TODO: Initialize weights correctly based on whethet it is pretrained or
     # not
     if pretrained:
-        model.load_state_dict(model_zoo.load_url(model_urls['alexnet']))
+        pretrained_state = model_zoo.load_url(model_urls['alexnet'])
+        model_state = model.state_dict()
+        for key in model_state:
+            if 'features' not in key:
+                if 'bias' not in key:
+                    nn.init.xavier_uniform_(model_state[key])
+            else:
+                model_state[key] = pretrained_state[key]
     return model
 
 
