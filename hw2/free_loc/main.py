@@ -20,6 +20,7 @@ import torch.utils.data.distributed
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
+from torchvision.utils import make_grid
         
 from datasets.factory import get_imdb
 from custom import *
@@ -212,7 +213,7 @@ def main():
         import visdom
         from tensorboardX import SummaryWriter
         vis = visdom.Visdom(server='http://localhost',port='8097')
-        training_loss = vis.line(Y=np.array([0.8]), X=np.array([0.0]), opts=dict(showlegend=True, title='Training Loss Curve', width=300, height=300, update='append'))
+        training_loss = vis.line(Y=np.array([0.8]), X=np.array([0.0]), opts=dict(title='Training Loss Curve', width=300, height=300, showlegend=False, xlabel='Global Step', ylabel='Loss'))
     #    print(logdir)
         date_time = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
         writer = SummaryWriter('/data/VLR/hw2/main_output/exp1' + date_time)
@@ -280,10 +281,10 @@ def train(train_loader, model, criterion, optimizer, epoch, vis, training_loss, 
         #loss = criterion(imoutput, torch.autograd.Varible(target_var.max(dim=1)[1]).long())
         loss = criterion(imoutput, target_var)
         # measure metrics and record loss
-        #m1 = metric1(imoutput.data, target)
+        m1 = metric1(imoutput.data, target)
         #m2 = metric2(imoutput.data, target)
         losses.update(loss.item(), input.size(0))
-        #avg_m1.update(m1, input.size(0))
+        avg_m1.update(m1, input.size(0))
         #avg_m2.update(m2, input.size(0))
 
         # TODO:
@@ -326,11 +327,13 @@ def train(train_loader, model, criterion, optimizer, epoch, vis, training_loss, 
 
         #TODO: Visualize things as mentioned in handout
         #TODO: Visualize at appropriate intervals
-        writer.add_scalar('train/loss', loss.item())
+        #writer.add_scalar('train/loss', loss.item(), )
         global_step.append(i+(len(train_loader)*epoch))
         if epoch == 1 and i == 0:
+            writer.add_scalar('train/loss', loss.item(), np.array([i]))
             vis.line(Y=np.array([loss.item()]), X=np.array([i]), opts=dict(title='Training Loss Curve', width=300, height=300, update='append'))
         else:
+            writer.add_scalar('train/loss', loss.item(), np.array([i+(len(train_loader)*epoch)]))
             vis.line(Y=np.array([loss.item()]), X=np.array([i+(len(train_loader)*epoch)]), win=training_loss, update='append')
 
         # End of train()
@@ -410,8 +413,10 @@ def validate(val_loader, model, criterion, vis, writer, epoch, classes):
             vis.heatmap(output[0][class_heat1], opts=dict(title=heatmap_title1, colormap='Electric'))
             vis.heatmap(output[1][class_heat2], opts=dict(title=heatmap_title2, colormap='Electric'))
             heatmap_title = 'epoch' + str(epoch) + '_iter' + str(i) + '_batchInd1&2_heatmap_' + classes[class_heat1] + '&' + classes[class_heat2]
+            
             output_to_show = torch.stack((output[0][class_heat1], output[1][class_heat2]))
-            writer.add_images(heatmap_title, output_to_show)
+            output_grid = make_grid(output_to_show)
+            writer.add_image(heatmap_title, output_to_show)
 
     #print(' * Metric1 {avg_m1.avg:.3f} Metric2 {avg_m2.avg:.3f}'.format(
     #    avg_m1=avg_m1, avg_m2=avg_m2))
@@ -470,7 +475,10 @@ def metric1(output, target):
 
 def metric2(output, target):
     #TODO: Ignore for now - proceed till instructed
-    
+    AP = []
+    for single_class in range(output.shape[-1]):
+        predicts = output[:,single_class]
+ 
 
     return [1]
 
