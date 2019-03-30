@@ -115,35 +115,43 @@ class LocalizerAlexNet(nn.Module):
         x = self.classifier(x)
         return x
 
-
-class LocalizerAlexNetHighres(nn.Module):
+class LocalizerAlexNetRobust(nn.Module):
     def __init__(self, num_classes=20):
-        super(LocalizerAlexNetHighres, self).__init__()
+        super(LocalizerAlexNetRobust, self).__init__()
         #TODO: Ignore for now until instructed
-
-
-
-
-
-
-
-
+        self.num_classes = num_classes
+        #Features:
+        self.features = nn.Sequential(       
+            nn.Conv2d(3, 64, kernel_size=11, stride=4, padding=2),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=3, stride=2, dilation=1, ceil_mode=False),
+            nn.Conv2d(64, 192, kernel_size=5, padding=2),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=3, stride=2, dilation=1, ceil_mode=False),
+            nn.Conv2d(192, 384, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(384, 256, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(256, 256, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            #nn.MaxPool2d(kernel_size=3, stride=1),
+        )
+        
+        #Classifier:
+        self.classifier = nn.Sequential(
+            nn.Dropout(0.4),
+            nn.Conv2d(256, 256, kernel_size=3, stride=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(256, 256, kernel_size=1, stride=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(256, self.num_classes, kernel_size=1, stride=1)
+        )
 
     def forward(self, x):
         #TODO: Ignore for now until instructed
-
-
-
-
-
-
-
-
-
-
+        x = self.features(x)
+        x = self.classifier(x)
         return x
-
-
 
 def localizer_alexnet(pretrained=False, **kwargs):
     r"""AlexNet model architecture from the
@@ -162,8 +170,13 @@ def localizer_alexnet(pretrained=False, **kwargs):
             if 'features' not in key:
                 if 'bias' not in key:
                     nn.init.xavier_uniform_(model_state[key])
+                else:
+                    model_state[key] = 0.0
             else:
-                model_state[key] = pretrained_state[key]
+                if 'bias' not in key:
+                    model_state[key] = pretrained_state[key]
+                else:
+                    model_state[key] = 0.0
     return model
 
 
@@ -176,18 +189,21 @@ def localizer_alexnet_robust(pretrained=False, **kwargs):
     """
     model = LocalizerAlexNetRobust(**kwargs)
     #TODO: Ignore for now until instructed
-
-
-
-
-
-
-
-
+    if pretrained:
+        pretrained_state = model_zoo.load_url(model_urls['alexnet'])
+        model_state = model.state_dict()
+        for key in model_state:
+            if 'features' not in key:
+                if 'bias' not in key:
+                    nn.init.xavier_uniform_(model_state[key])
+                else:
+                    model_state[key] = 0.0
+            else:
+                if 'bias' not in key:
+                    model_state[key] = pretrained_state[key]
+                else:
+                    model_state[key] = 0.0
     return model
-
-
-
 
 class IMDBDataset(data.Dataset):
     """A dataloader that reads imagesfrom imdbs
@@ -237,7 +253,7 @@ class IMDBDataset(data.Dataset):
             img = self.transform(img)
 
         if self.target_transform is not None:
-            img = self.target_transform(target)
+            target = self.target_transform(target)
 
         return img, target
 

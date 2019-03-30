@@ -7,7 +7,8 @@ import sys
 sys.path.insert(0, 'faster_rcnn')
 import sklearn
 import sklearn.metrics
-
+from scipy.interpolate import griddata
+from PIL import Image
 import torch
 import torch.nn as nn
 import torch.nn.parallel
@@ -21,7 +22,8 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
 from torchvision.utils import make_grid
-        
+import matplotlib.pyplot as plt
+import cv2
 from datasets.factory import get_imdb
 from custom import *
 
@@ -53,7 +55,7 @@ parser.add_argument(
 parser.add_argument(
     '-b',
     '--batch-size',
-    default=256,
+    default=32,
     type=int,
     metavar='N',
     help='mini-batch size (default: 256)')
@@ -82,10 +84,10 @@ parser.add_argument(
     help='print frequency (default: 10)')
 parser.add_argument(
     '--eval-freq',
-    default=10,
+    default=2,
     type=int,
     metavar='N',
-    help='print frequency (default: 10)')
+    help='eval frequency (default: 10)')
 parser.add_argument(
     '--resume',
     default='',
@@ -116,10 +118,40 @@ parser.add_argument(
 parser.add_argument(
     '--dist-backend', default='gloo', type=str, help='distributed backend')
 parser.add_argument('--vis', default=True, action='store_true')
-parser.add_argument('--gpu', default=None, type=int, help='GPU id to use')
+parser.add_argument('--gpu', default=0, type=int, help='GPU id to use')
 
 best_prec1 = 0
 
+mean=[0.485, 0.456, 0.406]
+std=[0.229, 0.224, 0.225]
+
+def resize_image(orig_img, size):
+    resized_image = scipy.ndimage.zoom(orig_img, float(size)/orig_img[-1])
+    return resized_image
+
+def save_class_activation_on_image(org_img, activation_map, writer):
+    """
+      Saves the activation map as a heatmap imposed on the original image.
+    """
+    activation_map = cv2.resize(activation_map, (384, 384))
+    #activation_map = resize_image(activation_map, 384)
+    activation_norm = (activation_map / activation_map.max())/(activation_map.max() - activation_map.min())*255.0
+    activation_int = np.uint8(activation_norm)
+    # Heatmap of activation map
+    activation_heatmap = cv2.applyColorMap(activation_int, cv2.COLORMAP_HSV)
+    # Heatmap on picture
+    org_trans = np.transpose(org_img, (1, 2, 0))
+    #org_reshape = cv2.resize(org_trans, (384, 384))
+    
+    img_with_heatmap = np.float32(activation_heatmap) + np.float32(org_trans*255.0)
+    img_with_heatmap = img_with_heatmap / np.max(img_with_heatmap)
+    return torch.tensor(np.transpose(img_with_heatmap, (2,0,1)))
+
+def unNormalize(image_batch, mean, std):
+    for image in image_batch:
+        for im_tens, m, s in zip(image, mean, std):
+            im_tens.mul_(s).add_(m)
+    return image_batch        
 
 def main():
     global args, best_prec1
@@ -138,8 +170,8 @@ def main():
 
     # TODO:
     # define loss function (criterion) and optimizer
-    #criterion = nn.CrossEntropyLoss().cuda(args.gpu)
-    criterion = nn.BCEWithLogitsLoss().cuda(args.gpu)
+    #criterion = nn.CrossEntropyLoss().cuda()
+    criterion = nn.BCEWithLogitsLoss().cuda()
     optimizer = torch.optim.SGD(model.parameters(), args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
 
 
@@ -163,7 +195,7 @@ def main():
     # TODO: Write code for IMDBDataset in custom.py
     trainval_imdb = get_imdb('voc_2007_trainval')
     test_imdb = get_imdb('voc_2007_test')
-
+    
     normalize = transforms.Normalize(
         mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     train_dataset = IMDBDataset(
@@ -203,18 +235,11 @@ def main():
     # TODO: Create loggers for visdom and tboard
     # TODO: You can pass the logger objects to train(), make appropriate
     # modifications to train()
-    #logdir = os.path.join('./main_output',
-    #                      datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
-    #if os.path.exists(logdir):
-    #    shutil.rmtree(logdir)
-    #os.makedirs(logdir)
- 
     if args.vis:
         import visdom
         from tensorboardX import SummaryWriter
         vis = visdom.Visdom(server='http://localhost',port='8097')
         training_loss = vis.line(Y=np.array([0.8]), X=np.array([0.0]), opts=dict(title='Training Loss Curve', width=300, height=300, showlegend=False, xlabel='Global Step', ylabel='Loss'))
-    #    print(logdir)
         date_time = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
         writer = SummaryWriter('/data/VLR/hw2/main_output/exp1' + date_time)
     else:
@@ -241,7 +266,10 @@ def main():
                 'best_prec1': best_prec1,
                 'optimizer': optimizer.state_dict(),
             }, is_best)
-
+        
+    m1, m2 = validate(val_loader, model, criterion, vis, writer, args.epochs, classes)
+    writer.export_scalars_to_json('/data/VLR/hw2/main_output/exp1' + date_time + '/all_scalars.json')
+    writer.close()
 
 #TODO: You can add input arguments if you wish
 def train(train_loader, model, criterion, optimizer, epoch, vis, training_loss, writer):
@@ -254,11 +282,9 @@ def train(train_loader, model, criterion, optimizer, epoch, vis, training_loss, 
     # switch to train mode
     model.train()
 
-    #Create global step for vis graph
-    global_step = []
-
     end = time.time()
     for i, (input, target) in enumerate(train_loader):
+
         # measure data loading time
         data_time.update(time.time() - end)
 
@@ -270,71 +296,61 @@ def train(train_loader, model, criterion, optimizer, epoch, vis, training_loss, 
         # TODO: Perform any necessary functions on the output
         # TODO: Compute loss using ``criterion``
         output = model(input_var)
-        #print('Train Model Output Shape: ', output.shape)
-
-        maxpool = nn.MaxPool2d(kernel_size=output.shape[-1], stride=1)
-        imoutput = maxpool(output)  
-        imoutput = imoutput.view(imoutput.size(0), -1)
-        #print('Train Maxpool Output Shape: ', imoutput.shape)
-        #print('Target Shape: ', target_var.long().shape)
-
-        #loss = criterion(imoutput, torch.autograd.Varible(target_var.max(dim=1)[1]).long())
+        #maxpool = nn.MaxPool2d(kernel_size=output.shape[-1], stride=1)
+        #imoutput = maxpool(output)  
+        imoutput = F.max_pool2d(output, kernel_size=(output.shape[-1], output.shape[-2]))
+        imoutput = imoutput.view(target_var.shape)
+        #imoutput = imoutput.type(torch.FloatTensor).cuda(async=True)
         loss = criterion(imoutput, target_var)
+        
         # measure metrics and record loss
         m1 = metric1(imoutput.data, target)
-        #m2 = metric2(imoutput.data, target)
+        m2 = metric2(imoutput.data, target)
         losses.update(loss.item(), input.size(0))
         avg_m1.update(m1, input.size(0))
-        #avg_m2.update(m2, input.size(0))
+        avg_m2.update(m2, input.size(0))
 
         # TODO:
         # compute gradient and do SGD step
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        
+        #hist_iter = 0
+        #for m in model.modules():
+        #    for name, param in m.named_parameters():
+        #        if 'weight' in name:
+        #            writer.add_histogram('weights_hist', param.data, hist_iter)
+        #            writer.add_histogram('grad_hist', param.grad, hist_iter)
+        #            hist_iter += 1
 
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
+        
+        writer.add_scalar('train/metric1', m1, i+(len(train_loader)*epoch))
+        writer.add_scalar('train/metric2', m2, i+(len(train_loader)*epoch))
 
         if i % args.print_freq == 0:
             print('Epoch: [{0}][{1}/{2}]\t'
                   'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
                   'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-                  'Metric1 {avg_m1.val:.3f} ({avg_m1.avg:.3f})'.format(
+                  'Metric1 {avg_m1.val:.3f} ({avg_m1.avg:.3f})\t'
+                  'Metric2 {avg_m2.val:.3f} ({avg_m2.avg:.3f})'.format(
                       epoch,
                       i,
                       len(train_loader),
                       batch_time=batch_time,
                       data_time=data_time,
                       loss=losses,
-                      avg_m1=avg_m1))
-            #print('Epoch: [{0}][{1}/{2}]\t'
-            #      'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-            #      'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
-            #      'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-            #      'Metric1 {avg_m1.val:.3f} ({avg_m1.avg:.3f})\t'
-            #      'Metric2 {avg_m2.val:.3f} ({avg_m2.avg:.3f})'.format(
-            #          epoch,
-            #          i,
-            #          len(train_loader),
-            #          batch_time=batch_time,
-            #          data_time=data_time,
-            #          loss=losses,
-            #          avg_m1=avg_m1,
-            #          avg_m2=avg_m2))
+                      avg_m1=avg_m1,
+                      avg_m2=avg_m2))
 
         #TODO: Visualize things as mentioned in handout
         #TODO: Visualize at appropriate intervals
-        #writer.add_scalar('train/loss', loss.item(), )
-        global_step.append(i+(len(train_loader)*epoch))
-        if epoch == 1 and i == 0:
-            writer.add_scalar('train/loss', loss.item(), np.array([i]))
-            vis.line(Y=np.array([loss.item()]), X=np.array([i]), opts=dict(title='Training Loss Curve', width=300, height=300, update='append'))
-        else:
-            writer.add_scalar('train/loss', loss.item(), np.array([i+(len(train_loader)*epoch)]))
-            vis.line(Y=np.array([loss.item()]), X=np.array([i+(len(train_loader)*epoch)]), win=training_loss, update='append')
+        writer.add_scalar('train/loss', loss.item(), i+(len(train_loader)*epoch))
+        vis.line(Y=np.array([loss.item()]), X=np.array([i+(len(train_loader)*epoch)]), win=training_loss, update='append')
 
         # End of train()
 
@@ -352,24 +368,27 @@ def validate(val_loader, model, criterion, vis, writer, epoch, classes):
     end = time.time()
     for i, (input, target) in enumerate(val_loader):
         target = target.type(torch.FloatTensor).cuda(async=True)
-        input_var = input
-        target_var = target
+        input_var = torch.autograd.Variable(input, volatile=True)
+        target_var = torch.autograd.Variable(target, volatile=True)
 
         # TODO: Get output from model
         # TODO: Perform any necessary functions on the output
         # TODO: Compute loss using ``criterion``
+        input_var = input_var.cuda()
         output = model(input_var)
-        maxpool = nn.MaxPool2d(kernel_size=output.shape[-1], stride=1)
+        maxpool = nn.MaxPool2d(kernel_size=output.shape[2], stride=1)
         imoutput = maxpool(output)
-        imoutput = imoutput.view(imoutput.size(0), -1)
+        imoutput = imoutput.view(target_var.shape)
         loss = criterion(imoutput, target_var)
-        #loss = criterion(imoutput, torch.autograd.Varible(target_var.max(dim=1)[1]).long())
+        
         # measure metrics and record loss
         m1 = metric1(imoutput.data, target)
-        #m2 = metric2(imoutput.data, target)
+        m2 = metric2(imoutput.data, target)
         losses.update(loss.item(), input.size(0))
         avg_m1.update(m1, input.size(0))
-        #avg_m2.update(m2, input.size(0))
+        avg_m2.update(m2, input.size(0))
+        writer.add_scalar('eval/avgMetric1', avg_m1.avg, i+(len(val_loader)*epoch))
+        writer.add_scalar('eval/avgMetric2', avg_m2.avg, i+(len(val_loader)*epoch))
 
         # measure elapsed time
         batch_time.update(time.time() - end)
@@ -379,50 +398,69 @@ def validate(val_loader, model, criterion, vis, writer, epoch, classes):
             print('Test: [{0}/{1}]\t'
                   'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-                  'Metric1 {avg_m1.val:.3f} ({avg_m1.avg:.3f})'.format(
+                  'Metric1 {avg_m1.val:.3f} ({avg_m1.avg:.3f})\t'
+                  'Metric2 {avg_m2.val:.3f} ({avg_m2.avg:.3f})'.format(
                       i,
                       len(val_loader),
                       batch_time=batch_time,
                       loss=losses,
-                      avg_m1=avg_m1))
-            #print('Test: [{0}/{1}]\t'
-            #      'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-            #      'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-            #      'Metric1 {avg_m1.val:.3f} ({avg_m1.avg:.3f})\t'
-            #      'Metric2 {avg_m2.val:.3f} ({avg_m2.avg:.3f})'.format(
-            #          i,
-            #          len(val_loader),
-            #          batch_time=batch_time,
-            #          loss=losses,
-            #          avg_m1=avg_m1,
-            #          avg_m2=avg_m2))
+                      avg_m1=avg_m1,
+                      avg_m2=avg_m2))
 
         #TODO: Visualize things as mentioned in handout
         #TODO: Visualize at appropriate intervals
-        writer.add_scalar('train/loss', loss.item(), i)
-        if i % image_freq:
-            images = input_var[0:2]
-            targets = target_var[0:2]
+        if epoch == args.epochs:
+            indeces = np.random.choice(input_var.shape[0]-1, 20, replace=False)
+            images = unNormalize(input_var[indeces,:,:], mean, std)
+            heat_images = images.clone()
+            heat_iter = 0
+            for index, image in zip(indeces, images):
+                target = target_var[index]
+                class_heat = np.argmax(target)
+                heat_out = output[index][class_heat].cpu().detach().numpy()
+                image_out = image.cpu().detach().numpy()
+                heat_image = save_class_activation_on_image(image_out, heat_out, writer)
+                heat_images[heat_iter,:,:] = heat_image
+                heat_iter += 1
+            image_title = 'final_eval_images'
+            vis.images(heat_images, opts=dict(title=image_title))
+            break
+
+        if i % image_freq == 0:
+            images_orig = input_var[0:2]
+            images = unNormalize(images_orig, mean, std)
+
+            targets = np.asarray(target_var[0:2].cpu().detach().numpy())
             class_heat1 = np.argmax(targets[0])
             class_heat2 = np.argmax(targets[1])
-            image_title = 'epoch' + str(epoch) + '_iter' + str(i) + '_batchInds1&2_image'
-            writer.add_images(image_title, images)
-            heatmap_title1 = 'epoch' + str(epoch) + '_iter' + str(i) + '_batchInd1_heatmap_' + classes[class_heat1]
-            heatmap_title2 = 'epoch' + str(epoch) + '_iter' + str(i) + '_batchInd2_heatmap_' + classes[class_heat2]
-            vis.images(images, opts=dict(title=image_title))
-            vis.heatmap(output[0][class_heat1], opts=dict(title=heatmap_title1, colormap='Electric'))
-            vis.heatmap(output[1][class_heat2], opts=dict(title=heatmap_title2, colormap='Electric'))
-            heatmap_title = 'epoch' + str(epoch) + '_iter' + str(i) + '_batchInd1&2_heatmap_' + classes[class_heat1] + '&' + classes[class_heat2]
-            
-            output_to_show = torch.stack((output[0][class_heat1], output[1][class_heat2]))
-            output_grid = make_grid(output_to_show)
-            writer.add_image(heatmap_title, output_to_show)
+            image_title = 'epoch' + str(epoch) + '_iter' + str(i) + '_batchInds0&1_' + classes[class_heat1] + '_' + classes[class_heat2]
+            #writer.add_images(image_title, images)
+            heatmap_title1 = 'epoch' + str(epoch) + '_iter' + str(i) + '_batchInd0_heatmap_' + classes[class_heat1]
+            heatmap_title2 = 'epoch' + str(epoch) + '_iter' + str(i) + '_batchInd1_heatmap_' + classes[class_heat2]
+            #vis.images(images, opts=dict(title=image_title))
+            heatmap1 = output[0][class_heat1].cpu().detach().numpy()
+            heatmap2 = output[1][class_heat2].cpu().detach().numpy()
+            image1 = images[0].cpu().detach().numpy()
+            image2 = images[1].cpu().detach().numpy()
+            #act_map1 = resize_image(heatmap1, 384)
+            #act_map2 = resize_image(heatmap2, 384)
+            act_map1 = cv2.resize(heatmap1, (384, 384))
+            act_map2 = cv2.resize(heatmap2, (384, 384))
+            vis.heatmap(X=np.flipud(act_map1), opts=dict(title=heatmap_title1, colormap='Electric'))
+            vis.heatmap(X=np.flipud(act_map2), opts=dict(title=heatmap_title2, colormap='Electric'))
+            heatmap_title = 'epoch' + str(epoch) + '_iter' + str(i) + '_batchInd0&1_heatmap_' + classes[class_heat1] + '_' + classes[class_heat2]
+            #heat_image = plot_image(output[0][class_heat1])
+            heat_image1 = save_class_activation_on_image(image1, heatmap1, writer)
+            heat_image2 = save_class_activation_on_image(image2, heatmap2, writer)
+            heat_images = np.stack((heat_image1, heat_image2), axis=0)
+            #vis.images(heat_images, opts=dict(title=heatmap_title))
+            writer.add_images(heatmap_title, heat_images)
+            #writer.add_image(heatmap_title2, heat_image2)
 
-    #print(' * Metric1 {avg_m1.avg:.3f} Metric2 {avg_m2.avg:.3f}'.format(
-    #    avg_m1=avg_m1, avg_m2=avg_m2))
+    print(' * Metric1 {avg_m1.avg:.3f} Metric2 {avg_m2.avg:.3f}'.format(
+        avg_m1=avg_m1, avg_m2=avg_m2))
 
-    #return avg_m1.avg, avg_m2.avg
-    return avg_m1.avg, 1.0
+    return avg_m1.avg, avg_m2.avg
 
 # TODO: You can make changes to this function if you wish (not necessary)
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
@@ -460,27 +498,31 @@ def adjust_learning_rate(optimizer, epoch):
 def metric1(output, target):
     # TODO: Ignore for now - proceed till instructed
     AP = []
+    sigmoid = nn.Sigmoid()
     for single_class in range(output.shape[-1]):
-        predicts = output[:,single_class]
-        targets = target[:,single_class]
-        _, sorted_inds = torch.sort(predicts, 0, True)
-        sorted_targs = np.asarray(targets[sorted_inds])
-        sorted_preds = np.asarray(predicts[sorted_inds].cpu().detach().numpy())
-        class_ap = sklearn.metrics.average_precision_score(sorted_targs, sorted_preds)
+        predicts = sigmoid(output[:,single_class]).cpu().detach().numpy()
+        targets = target[:, single_class].cpu().detach().numpy()
+        class_ap = sklearn.metrics.average_precision_score(targets, predicts)
         AP.append(class_ap)
 
     mAP = np.nanmean(AP)
     return mAP
 
-
-def metric2(output, target):
+def metric2(output, target, thresh=0.6):
     #TODO: Ignore for now - proceed till instructed
     AP = []
+    sigmoid = nn.Sigmoid()
     for single_class in range(output.shape[-1]):
-        predicts = output[:,single_class]
- 
-
-    return [1]
+        predicts = sigmoid(output[:,single_class]).cpu().detach().numpy()
+        targets = target[:, single_class].cpu().detach().numpy()
+        pos_inds = predicts >= thresh
+        neg_inds = predicts < thresh
+        predicts[neg_inds] = np.float32(0.0)
+        predicts[pos_inds] = np.float32(1.0)
+        class_ap = sklearn.metrics.average_precision_score(targets, predicts)
+        AP.append(class_ap)
+    mAP = np.nanmean(AP)
+    return mAP
 
 
 if __name__ == '__main__':
