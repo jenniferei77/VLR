@@ -30,7 +30,7 @@ rand_seed = 1024
 save_name = '{}_{}'
 max_per_image = 300
 thresh = 0.0001
-visualize = False
+visualize = True
 
 # ------------
 
@@ -47,7 +47,7 @@ if visualize:
     import visdom
     from tensorboardX import SummaryWriter
 
-def vis_detections(im, class_name, dets, thresh=0.005):
+def vis_detections(im, class_name, dets, thresh=0.02):
     """Visual debugging of detections."""
     for i in range(np.minimum(10, dets.shape[0])):
         bbox = tuple(int(np.round(x)) for x in dets[i, :4])
@@ -95,7 +95,7 @@ def test_net(name,
              net,
              imdb,
              max_per_image=300,
-             thresh=0.05,
+             thresh=0.0001,
              visualize=False,
              logger=None,
              step=None):
@@ -115,8 +115,8 @@ def test_net(name,
     roidb = imdb.roidb
     print_iter = num_images / 5
     print('Print images at iteration: ', print_iter)
-    for i in range(num_images):
-        im = cv2.imread(imdb.image_path_at(i))
+    for i in range(0, num_images):
+        im = cv2.imread(imdb.image_path_at(i))  #Need to change colors back now!
         rois = imdb.roidb[i]['boxes']
         _t['im_detect'].tic()
         scores, boxes = im_detect(net, im, rois)
@@ -170,11 +170,12 @@ def test_net(name,
 
     print('Evaluating detections')
     aps = imdb.evaluate_detections(all_boxes, output_dir)
+    
     if visualize and logger:
         classes = imdb.classes
         class_iter = 0
         for class_ap in aps:
-            logger.add_scalar('test/mAP_'+ classes[class_iter], class_ap)
+            logger.add_scalar('test/mAP_'+ classes[class_iter], class_ap, step)
             class_iter += 1
         
     return aps
@@ -186,7 +187,7 @@ if __name__ == '__main__':
     imdb.competition_mode(on=True)
 
     # load net
-    net = WSDDN(classes=imdb.classes, debug=False, training=False)
+    net = WSDDN(classes=imdb.classes, debug=False)
     trained_model = trained_model_fmt.format(cfg.TRAIN.SNAPSHOT_PREFIX, 30000)
     print('Loading {}'.format(trained_model))
     network.load_net(trained_model, net)

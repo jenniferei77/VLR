@@ -49,6 +49,7 @@ start_step = 0
 end_step = 30000
 lr_decay_steps = {150000}
 lr_decay = 1. / 10
+thresh = 0.001
 
 rand_seed = 1024
 _DEBUG = False
@@ -79,13 +80,7 @@ data_layer = RoIDataLayer(roidb, imdb.num_classes)
 
 # load test imdb and create data layer
 test_imdb = get_imdb('voc_2007_test')
-test_imdb.competition_mode(on=True)
-rdl_roidb.prepare_roidb(imdb)
-roidb = imdb.roidb
-data_layer = RoIDataLayer(roidb, imdb.num_classes)
-
-
-tNet = WSDDN(classes=imdb.classes, debug=False, training=False)
+#test_imdb.competition_mode(on=True)
 
 # Create network and initialize
 net = WSDDN(classes=imdb.classes, debug=_DEBUG, training=True)
@@ -99,7 +94,6 @@ else:
     pkl.dump(pret_net, open('pretrained_alexnet.pkl', 'wb'),
              pkl.HIGHEST_PROTOCOL)
 own_state = net.state_dict()
-optim_params = {}
 for name, param in pret_net.items():
     if name not in own_state:
         continue
@@ -107,21 +101,31 @@ for name, param in pret_net.items():
         param = param.data
     try:
         own_state[name].copy_(param)
-        if 'features.0' not in name:
-            optim_params[name] = torch.tensor(param)
         print('Copied {}'.format(name))
     except:
         print('Did not find {}'.format(name))
         continue
+own_state['classifier.0.weight'].copy_(pret_net['classifier.1.weight'].data)
+own_state['classifier.0.bias'].copy_(pret_net['classifier.1.bias'].data)
+own_state['classifier.3.weight'].copy_(pret_net['classifier.4.weight'].data)
+own_state['classifier.3.bias'].copy_(pret_net['classifier.4.bias'].data)
+
+#own_state['fc6.fc.weight'].copy_(pret_net['classifier.1.weight'])
+#own_state['fc6.fc.bias'].copy_(pret_net['classifier.1.bias'])
+#own_state['fc7.fc.weight'].copy_(pret_net['classifier.4.weight'])
+#own_state['fc7.fc.bias'].copy_(pret_net['classifier.4.bias'])
+
+
 
 # Move model to GPU and set train mode
-net.load_state_dict(own_state)
+#net.load_state_dict(own_state)
 net.cuda()
 net.train()
 
 # TODO: Create optimizer for network parameters from conv2 onwards
 # (do not optimize conv1)
-optimizer = torch.optim.SGD(optim_params.values(), lr, momentum=momentum, weight_decay=weight_decay)
+sgd_params = list(net.parameters())[2:]
+optimizer = torch.optim.SGD(sgd_params, lr, momentum=momentum, weight_decay=weight_decay)
 
 if not os.path.exists(output_dir):
     os.makedirs(output_dir)
@@ -140,10 +144,9 @@ if use_visdom:
     vis = visdom.Visdom(server='http://localhost', port='8097')
     training_loss = vis.line(Y=np.array([0.8]), X=np.array([0.0]), opts=dict(title='Training Loss Curve', width=300, height=300, showlegend=False, xlabel='Global Step', ylabel='Loss'))
     testing_mAP = vis.line(Y=np.array([0.8]), X=np.array([0.0]), opts=dict(title='Testing mAP', width=300, height=300, showlegend=False, xlabel='Global Step', ylabel='Test mAP'))
+
 # training
 train_loss = 0
-test_mAP = []
-train_losses = []
 tp, tf, fg, bg = 0., 0., 0, 0
 step_cnt = 0
 re_cnt = False
@@ -160,17 +163,18 @@ for step in range(start_step, end_step + 1):
     im_info = blobs['im_info']
     gt_vec = blobs['labels']
     #gt_boxes = blobs['gt_boxes']
+    
     # forward
     net(im_data, rois, im_info, gt_vec)
     loss = net.loss
     train_loss += loss.item()
-    train_losses.append(loss.item())
     step_cnt += 1
 
     # backward pass and update
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
+    
     # Log to screen
     if step % disp_interval == 0:
         duration = t.toc(average=False)
@@ -183,21 +187,16 @@ for step in range(start_step, end_step + 1):
 
     #TODO: evaluate the model every N iterations (N defined in handout)
     if step % 5000 == 0:
-        
-        #trained_model = trained_model_fmt.format(cfg.TRAIN.SNAPSHOT_PREFIX, 30000)
-        #tNet.load_state_dict(net.state_dict())
-        #tNet.cuda()
-        #tNet.eval()
         net.eval()
-        aps = test_net(test_name, net, test_imdb, max_per_image=300, thresh=0.05, visualize=True, logger=writer, step=step)
+        test_imdb.competition_mode(on=True)
+        aps = test_net(test_name + '_step_' + str(step), net, test_imdb, max_per_image=300, thresh=0.0001, visualize=True, logger=writer, step=step)
         mAP = np.nanmean(np.asarray(aps))
-    #subprocess.call("./test.py", shell=True)
     #TODO: Perform all visualizations here
     #You can define other interval variable if you want (this is just an
     #example)
     #The intervals for different things are defined in the handout
     #if visualize and step % vis_interval == 0:
-    if visualize and step % 10 == 0:
+    if visualize and step % 500 == 0:
         #TODO: Create required visualizations
         if use_tensorboard:
             print('Logging to Tensorboard')
@@ -206,19 +205,20 @@ for step in range(start_step, end_step + 1):
                 hist_iter = 0
                 for m in net.modules():
                     for name, param in m.named_parameters():
-                        if 'fc7.fc.weight' in name or 'featutes.3.weight' in name or 'features.0.weight' in name:
-                            writer.add_histogram('weights_hist', param.data, hist_iter)
-                            writer.add_histogram('grad_hist', param.grad, hist_iter)
+                        if 'classifier.3.weight' in name or 'features.3.weight' in name or 'features.0.weight' in name:
+                            writer.add_histogram('weights_hist/layer' + str(hist_iter), param.data.cpu().numpy(), hist_iter)
+                            writer.add_histogram('grad_hist/layer' + str(hist_iter), param.grad.data.cpu().numpy(), hist_iter)
                             hist_iter += 1
         if use_visdom:
             print('Logging to visdom')
             vis.line(Y=np.asarray([loss.item()]), X=np.array([step]), win=training_loss, update='append')
-            if mAP != None:
+            if mAP != None and step % 5000 == 0:
                 vis.line(Y=np.asarray([mAP]), X=np.array([step]), win=testing_mAP, update='append')
 
 
     # Save model occasionally
-    if (step % cfg.TRAIN.SNAPSHOT_ITERS == 0) and step > 0:
+    #if (step % cfg.TRAIN.SNAPSHOT_ITERS == 0) and step > 0:
+    if (step % 15000 == 0) and step > 0:
         save_name = os.path.join(
             output_dir, '{}_{}.h5'.format(cfg.TRAIN.SNAPSHOT_PREFIX, step))
         network.save_net(save_name, net)
@@ -226,10 +226,8 @@ for step in range(start_step, end_step + 1):
 
     if step in lr_decay_steps:
         lr *= lr_decay
-        #optimizer = torch.optim.SGD(
-        #    optimizer.param_groups, lr=lr, momentum=momentum, weight_decay=weight_decay)
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = lr
+        optimizer = torch.optim.SGD(
+            optimizer.param_groups, lr=lr, momentum=momentum, weight_decay=weight_decay)
     if re_cnt:
         tp, tf, fg, bg = 0., 0., 0, 0
         train_loss = 0

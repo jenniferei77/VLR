@@ -43,12 +43,10 @@ def make_dataset(imdb, class_to_idx):
     #You will be using this in IMDBDataset
     dataset_list = []
     for ind in range(len(imdb._image_index)):
-        ve_classes = np.zeros(len(class_to_idx), dtype=np.int32)
         im_path = imdb.image_path_at(ind)
         im_classes = imdb._load_pascal_annotation(imdb.image_index[ind])['gt_classes'] - 1
         im_classes = np.unique(im_classes)
-        ve_classes[im_classes] = np.int32(1)
-        im_tup = (im_path, ve_classes.tolist())
+        im_tup = (im_path, im_classes.tolist())
         dataset_list.append(im_tup)
     return dataset_list
 
@@ -134,12 +132,12 @@ class LocalizerAlexNetRobust(nn.Module):
             nn.ReLU(inplace=True),
             nn.Conv2d(256, 256, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
-            #nn.MaxPool2d(kernel_size=3, stride=1),
+            nn.MaxPool2d(kernel_size=3, stride=1),
         )
         
         #Classifier:
         self.classifier = nn.Sequential(
-            nn.Dropout(0.4),
+            nn.Dropout(0.5),
             nn.Conv2d(256, 256, kernel_size=3, stride=1),
             nn.ReLU(inplace=True),
             nn.Conv2d(256, 256, kernel_size=1, stride=1),
@@ -163,20 +161,28 @@ def localizer_alexnet(pretrained=False, **kwargs):
     model = LocalizerAlexNet(**kwargs)
     #TODO: Initialize weights correctly based on whethet it is pretrained or
     # not
-    if pretrained:
-        pretrained_state = model_zoo.load_url(model_urls['alexnet'])
+   if pretrained:
+        pretrained_state = model_zoo.load_url(model_urls['alexnet'], model_dir='./')
         model_state = model.state_dict()
-        for key in model_state:
-            if 'features' not in key:
-                if 'bias' not in key:
-                    nn.init.xavier_uniform_(model_state[key])
-                else:
-                    model_state[key] = 0.0
-            else:
-                if 'bias' not in key:
-                    model_state[key] = pretrained_state[key]
-                else:
-                    model_state[key] = 0.0
+        pretrained_state = {key:value for key, value in pretrained_state.items() if key.split('.')[0] == "features"}
+        model_state.update(pretrained_state)
+        model.load_state_dict(model_state)
+        for layer in model.classifier:
+            if isinstance(layer, nn.Conv2d):
+                nn.init.xavier_uniform_(layer.weight)
+                nn.init.zeros_(layer.bias)
+        #for key in model_state:
+        #    if 'features' not in key:
+        #        if 'bias' not in key:
+        #            nn.init.xavier_uniform_(model_state[key])
+        #        else:
+        #            model_state[key] = 0.0
+        #    else:
+        #        if 'bias' not in key:
+        #            model_state[key] = pretrained_state[key]
+        #        else:
+        #            model_state[key] = 0.0
+    #model.load_state_dict(model_state)
     return model
 
 
@@ -190,19 +196,27 @@ def localizer_alexnet_robust(pretrained=False, **kwargs):
     model = LocalizerAlexNetRobust(**kwargs)
     #TODO: Ignore for now until instructed
     if pretrained:
-        pretrained_state = model_zoo.load_url(model_urls['alexnet'])
+        pretrained_state = model_zoo.load_url(model_urls['alexnet'], model_dir='./')
         model_state = model.state_dict()
-        for key in model_state:
-            if 'features' not in key:
-                if 'bias' not in key:
-                    nn.init.xavier_uniform_(model_state[key])
-                else:
-                    model_state[key] = 0.0
-            else:
-                if 'bias' not in key:
-                    model_state[key] = pretrained_state[key]
-                else:
-                    model_state[key] = 0.0
+        pretrained_state = {key:value for key, value in pretrained_state.items() if key.split('.')[0] == "features"}
+        model_state.update(pretrained_state)
+        model.load_state_dict(model_state)
+        for layer in model.classifier:
+            if isinstance(layer, nn.Conv2d):
+                nn.init.xavier_uniform_(layer.weight)
+                nn.init.zeros_(layer.bias)
+        #for key in model_state:
+        #    if 'features' not in key:
+        #        if 'bias' not in key:
+        #            nn.init.xavier_uniform_(model_state[key])
+        #        else:
+        #            nn.init.zeros_(model_state[key])
+        #    else:
+        #        if 'bias' not in key:
+        #            model_state[key] = pretrained_state[key]
+        #        else:
+        #            nn.init.zeros_(model_state[key])
+    #model.load_state_dict(model_state)
     return model
 
 class IMDBDataset(data.Dataset):
@@ -246,9 +260,12 @@ class IMDBDataset(data.Dataset):
                                    (it can be a numpy array)
         """
         # TODO: Write this function, look at the imagenet code for inspiration
-        img_path, target_list = self.imgs[index]
+        img_path, target_indeces = self.imgs[index]
+        target = np.zeros((len(self.classes),)) 
+        for ind in target_indeces:
+            target[ind] = 1
+        
         img = self.loader(img_path)
-        target = np.asarray(target_list)
         if self.transform is not None:
             img = self.transform(img)
 

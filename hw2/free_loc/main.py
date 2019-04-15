@@ -298,12 +298,13 @@ def train(train_loader, model, criterion, optimizer, epoch, vis, training_loss, 
         output = model(input_var)
         #maxpool = nn.MaxPool2d(kernel_size=output.shape[-1], stride=1)
         #imoutput = maxpool(output)  
-        imoutput = F.max_pool2d(output, kernel_size=(output.shape[-1], output.shape[-2]))
+        imoutput = F.max_pool2d(output, kernel_size=(output.shape[2], output.shape[3]))
         imoutput = imoutput.view(target_var.shape)
         #imoutput = imoutput.type(torch.FloatTensor).cuda(async=True)
         loss = criterion(imoutput, target_var)
         
         # measure metrics and record loss
+        imoutput = F.sigmoid(imoutput)
         m1 = metric1(imoutput.data, target)
         m2 = metric2(imoutput.data, target)
         losses.update(loss.item(), input.size(0))
@@ -382,6 +383,7 @@ def validate(val_loader, model, criterion, vis, writer, epoch, classes):
         loss = criterion(imoutput, target_var)
         
         # measure metrics and record loss
+        imoutput = F.sigmoid(imoutput)
         m1 = metric1(imoutput.data, target)
         m2 = metric2(imoutput.data, target)
         losses.update(loss.item(), input.size(0))
@@ -498,10 +500,10 @@ def adjust_learning_rate(optimizer, epoch):
 def metric1(output, target):
     # TODO: Ignore for now - proceed till instructed
     AP = []
-    sigmoid = nn.Sigmoid()
     for single_class in range(output.shape[-1]):
-        predicts = sigmoid(output[:,single_class]).cpu().detach().numpy()
-        targets = target[:, single_class].cpu().detach().numpy()
+        predicts = output[:,single_class].cpu().numpy()
+        targets = target[:, single_class].cpu().numpy()
+        predicts -= targets * 1e-5
         class_ap = sklearn.metrics.average_precision_score(targets, predicts)
         AP.append(class_ap)
 
@@ -511,14 +513,14 @@ def metric1(output, target):
 def metric2(output, target, thresh=0.6):
     #TODO: Ignore for now - proceed till instructed
     AP = []
-    sigmoid = nn.Sigmoid()
     for single_class in range(output.shape[-1]):
-        predicts = sigmoid(output[:,single_class]).cpu().detach().numpy()
+        predicts = output[:,single_class].cpu().detach().numpy()
         targets = target[:, single_class].cpu().detach().numpy()
+        predicts -= targets * 1e-5
         pos_inds = predicts >= thresh
         neg_inds = predicts < thresh
-        predicts[neg_inds] = np.float32(0.0)
-        predicts[pos_inds] = np.float32(1.0)
+        predicts[neg_inds] = 0
+        predicts[pos_inds] = 1
         class_ap = sklearn.metrics.average_precision_score(targets, predicts)
         AP.append(class_ap)
     mAP = np.nanmean(AP)

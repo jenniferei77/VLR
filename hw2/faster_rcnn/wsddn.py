@@ -14,6 +14,8 @@ from network import Conv2d, FC
 #from roi_pooling.modules.roi_pool import RoIPool
 from roi_pooling_new.modules.roi_pool import _RoIPooling as RoIPool
 from vgg16 import VGG16
+from torch.autograd import Variable
+
 import pdb
 
 
@@ -48,7 +50,7 @@ class WSDDN(nn.Module):
 
     def __init__(self, classes=None, debug=False, training=True):
         super(WSDDN, self).__init__()
-
+        self.training = True
         if classes is not None:
             self.classes = classes
             self.n_classes = len(classes)
@@ -72,14 +74,25 @@ class WSDDN(nn.Module):
         )
        
         self.roi_pool = RoIPool(6, 6, 1.0/16)
-        self.fc6 = FC(256*6*6, 4096)
-        self.fc7 = FC(4096, 4096)
-        self.score_fc = FC(4096, self.n_classes, relu=False)
-        self.det_fc = FC(4096, self.n_classes, relu=False)
+
+        self.classifier = nn.Sequential(
+            nn.Linear(in_features=256*6*6, out_features=4096),
+            nn.ReLU(inplace = True),
+            nn.Dropout(0.5),
+            nn.Linear(in_features=4096, out_features=4096),
+            nn.ReLU(inplace=True)
+        )
+
+        self.score_fc = nn.Linear(in_features=4096, out_features=20)
+        self.det_fc = nn.Linear(in_features=4096, out_features=20)
+        #self.fc6 = FC(256*6*6, 4096, relu=True)
+        #self.fc7 = FC(4096, 4096, relu=True)
+        
+        #self.score_fc = FC(4096, self.n_classes, relu=False)
+        #self.det_fc = FC(4096, self.n_classes, relu=False)
         
         # loss
         self.cross_entropy = None
-        self.loss_box = None
 
         # for log
         self.debug = debug
@@ -105,26 +118,28 @@ class WSDDN(nn.Module):
         # Checkout faster_rcnn.py for inspiration
         features = self.features(im_data)
         pooled_features = self.roi_pool(features, rois)
-        x = pooled_features.view(pooled_features.size()[0], -1)
-        x = self.fc6(x)
-        x = F.dropout(x, training=self.training)
-        x = self.fc7(x)
-        x = F.dropout(x, training=self.training)
+        x = pooled_features.view(pooled_features.size(0), -1)
+        #x = pooled_features.view(pooled_features.size(0), 256*6*6)
+        x = self.classifier(x)
+        #x = self.fc6(x)
+        #x = F.dropout(x, training=self.training)
+        #x = self.fc7(x)
 
         cls_score = self.score_fc(x)
         cls_prob = F.softmax(cls_score, dim=1)
+        
         det_pred = self.det_fc(x)
         det_prob = F.softmax(det_pred, dim=0)
+        
         #element-wise mult, then summation to turn into Nx20
         total_prob = cls_prob * det_prob
-        total_prob = torch.sum(total_prob, dim=0)
-        #total_prob.view(-1, self.n_classes)
+ 
         if self.training:
             label_vec = torch.from_numpy(gt_vec).cuda().float()
-            label_vec = label_vec.view(self.n_classes, -1)
-            self.cross_entropy = self.build_loss(cls_prob.view(-1,self.n_classes), label_vec)
+            label_vec = label_vec.view(-1, self.n_classes)
+            self.cross_entropy = self.build_loss(total_prob, label_vec)
         
-#remember to clamp between 0 and 1
+        #remember to clamp between 0 and 1
         return total_prob
 
     def build_loss(self, cls_prob, label_vec):
@@ -139,12 +154,12 @@ class WSDDN(nn.Module):
         #output of forward()
         #Checkout forward() to see how it is called 
         
-        #total_prob = torch.sum(cls_prob, dim=0)
-        #bceloss = self.cross_entropy(total_prob.view(self.n_classes, -1), label_vec)
+        total_prob = torch.sum(cls_prob, dim=0)
+        total_prob = total_prob.view(-1, self.n_classes)
         #bceloss = nn.BCELoss(reduction='elementwise_mean').cuda()
         #cross_entropy = bceloss(cls_prob.view(self.n_classes, -1), label_vec)
-        pdb.set_trace()
-        cross_entropy = F.binary_cross_entropy(input=cls_prob, target=label_vec) 
+        total_prob = torch.clamp(total_prob, min=0.0, max=1.0)
+        cross_entropy = F.binary_cross_entropy(total_prob, label_vec, size_average=False) 
         return cross_entropy
 
     def detect(self, image, rois, thr=0.3):
