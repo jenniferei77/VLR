@@ -44,7 +44,6 @@ pretrained_model = 'data/pretrained_model/alexnet_imagenet.npy'
 output_dir = 'models/saved_model'
 visualize = True
 vis_interval = 500
-
 start_step = 0
 end_step = 30000
 lr_decay_steps = {150000}
@@ -110,13 +109,6 @@ own_state['classifier.0.bias'].copy_(pret_net['classifier.1.bias'].data)
 own_state['classifier.3.weight'].copy_(pret_net['classifier.4.weight'].data)
 own_state['classifier.3.bias'].copy_(pret_net['classifier.4.bias'].data)
 
-#own_state['fc6.fc.weight'].copy_(pret_net['classifier.1.weight'])
-#own_state['fc6.fc.bias'].copy_(pret_net['classifier.1.bias'])
-#own_state['fc7.fc.weight'].copy_(pret_net['classifier.4.weight'])
-#own_state['fc7.fc.bias'].copy_(pret_net['classifier.4.bias'])
-
-
-
 # Move model to GPU and set train mode
 #net.load_state_dict(own_state)
 net.cuda()
@@ -163,7 +155,6 @@ for step in range(start_step, end_step + 1):
     im_info = blobs['im_info']
     gt_vec = blobs['labels']
     #gt_boxes = blobs['gt_boxes']
-    
     # forward
     net(im_data, rois, im_info, gt_vec)
     loss = net.loss
@@ -174,7 +165,6 @@ for step in range(start_step, end_step + 1):
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
-    
     # Log to screen
     if step % disp_interval == 0:
         duration = t.toc(average=False)
@@ -214,7 +204,6 @@ for step in range(start_step, end_step + 1):
             vis.line(Y=np.asarray([loss.item()]), X=np.array([step]), win=training_loss, update='append')
             if mAP != None and step % 5000 == 0:
                 vis.line(Y=np.asarray([mAP]), X=np.array([step]), win=testing_mAP, update='append')
-
 
     # Save model occasionally
     #if (step % cfg.TRAIN.SNAPSHOT_ITERS == 0) and step > 0:

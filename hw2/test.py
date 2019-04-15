@@ -90,7 +90,6 @@ def im_detect(net, image, rois):
 
     return scores, pred_boxes
 
-
 def test_net(name,
              net,
              imdb,
@@ -170,14 +169,12 @@ def test_net(name,
 
     print('Evaluating detections')
     aps = imdb.evaluate_detections(all_boxes, output_dir)
-    
     if visualize and logger:
         classes = imdb.classes
         class_iter = 0
         for class_ap in aps:
             logger.add_scalar('test/mAP_'+ classes[class_iter], class_ap, step)
             class_iter += 1
-        
     return aps
 
 
@@ -200,4 +197,3 @@ if __name__ == '__main__':
     aps = test_net(
         save_name, net, imdb, max_per_image, thresh=thresh, visualize=True)
     mAP = np.nanmean(aps.cuda().detach().numpy())
-        
